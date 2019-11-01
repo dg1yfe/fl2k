@@ -73,7 +73,7 @@ uint32_t samp_rate = 100000000;
 #define PILOT_FREQ	19000	/* In Hz */
 #define STEREO_CARRIER	38000	/* In Hz */
 
-int delta_freq = 75000;
+int deviation = 75000;
 int carrier_freq = 97000000;
 int carrier_per_signal;
 int input_freq = 44100;
@@ -289,7 +289,7 @@ static inline double modulate_sample(int lastwritepos, double lastfreq, double s
 
 	/* Calculate modulator frequency at this point to lessen
 	 * the calculations needed in the signal generator */
-	freq = sample * delta_freq;
+	freq = sample * deviation;
 	freq += carrier_freq;
 
 	/* What we do here is calculate a linear "slope" from
@@ -468,7 +468,7 @@ int main(int argc, char **argv)
 			carrier_freq = (uint32_t)atof(optarg);
 			break;
 		case 'f':
-			delta_freq = (uint32_t)atof(optarg);
+			deviation = (uint32_t)atof(optarg);
 			break;
 		case 'i':
 			input_freq = (uint32_t)atof(optarg);
