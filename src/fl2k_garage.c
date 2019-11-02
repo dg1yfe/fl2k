@@ -54,7 +54,7 @@
 #define BUFFER_SAMPLES		(1 << BUFFER_SAMPLES_SHIFT)
 #define BUFFER_SAMPLES_MASK	((1 << BUFFER_SAMPLES_SHIFT)-1)
 
-#define AUDIO_BUF_SIZE		1024
+#define AUDIO_BUF_SIZE		4096
 
 #define BASEBAND_SAMPLES_PER_CHIP 3
 #define BASEBAND_WORD_BITS 12
@@ -63,6 +63,7 @@
 #define BASEBAND_CHIPS_PER_SPACE BASEBAND_CHIPS_PER_WORD
 #define BASEBAND_SPACE_HIGH_CHIPS 1
 #define BASEBAND_SPACE_LOW_CHIPS (BASEBAND_CHIPS_PER_SPACE - BASEBAND_SPACE_HIGH_CHIPS)
+#define BASEBAND_CHIPS_TOTAL (BASEBAND_CHIPS_PER_SPACE + BASEBAND_CHIPS_PER_WORD)
 
 fl2k_dev_t *dev = NULL;
 int do_exit = 0;
@@ -76,7 +77,9 @@ pthread_cond_t cb_cond;
 pthread_cond_t fm_cond;
 pthread_cond_t am_cond;
 
-FILE *file;
+int16_t *sample_buf;
+int sample_buf_size;
+
 int8_t *txbuf = NULL;
 int8_t *ambuf = NULL;
 int8_t *buf1 = NULL;
@@ -313,6 +316,7 @@ void am_modulator(const int code_input)
 	int32_t lastamp = 0;
 	uint32_t lastwritepos = writepos;
 	int16_t sample = 0;
+	int samplebuf_pos = 0;
 
 	/*
 	 *  3*640 us = 1,92 ms pro Symbol
@@ -329,42 +333,60 @@ void am_modulator(const int code_input)
 				do_exit = 1;
 
 			for (i = 0; i < len; i++) {
-				if( ++b >= BASEBAND_SAMPLES_PER_CHIP ){
-					b = 0;
-					if(counter < (BASEBAND_SPACE_LOW_CHIPS)){
-						sample = 0;
-					}
-					else if(counter < (BASEBAND_CHIPS_PER_SPACE)){
-						// synch symbol
-						sample = 1;
-						// reload code
-						code = code_input;
-					}
-					else{
-						int m;
-						m = counter % BASEBAND_CHIPS_PER_BIT;
-						if(m == 0){
-							sample = 0;
-						}
-						else if(m == 1){
-							sample = (code & 1) ^ 1;
-						}
-						else{
-							sample = 1;
-							code >>= 1;
-						}
-					}
-					if(++counter >= (BASEBAND_CHIPS_PER_SPACE + BASEBAND_CHIPS_PER_WORD)){
-						counter = 0;
-					}
-				}
 				/* Modulate and buffer the sample */
+				sample = sample_buf[samplebuf_pos++];
+				if(samplebuf_pos >= BASEBAND_SAMPLES_PER_CHIP * BASEBAND_CHIPS_TOTAL){
+					samplebuf_pos = 0;
+				}
 				lastamp = modulate_sample_am(lastwritepos, lastamp, sample);
 				lastwritepos = writepos++;
 				writepos %= BUFFER_SAMPLES;
 			}
 		} else {
 			pthread_cond_wait(&fm_cond, &fm_mutex);
+		}
+	}
+}
+
+void prepare_baseband(const int code_input, int16_t * sbuf){
+	int counter;
+	int b;
+	int sample_no;
+	int16_t sample;
+	int msb_first_code;
+
+	msb_first_code = 0;
+	// change to msb first and invert
+	for(b = 0;b<12;b++){
+		msb_first_code |= code_input & (1<<b) ? 0 : 1;
+		msb_first_code <<= 1;
+	}
+
+	sample_no = 0;
+	for(counter=0;counter < (BASEBAND_CHIPS_PER_SPACE + BASEBAND_CHIPS_PER_WORD) ; counter++){
+		for(b=0 ; b<BASEBAND_SAMPLES_PER_CHIP ; b++){
+			if(counter < (BASEBAND_SPACE_LOW_CHIPS)){
+				sample = 0;
+			}
+			else if(counter < (BASEBAND_CHIPS_PER_SPACE)){
+				// synch symbol
+				sample = 1;
+			}
+			else{
+				int m;
+				m = counter % BASEBAND_CHIPS_PER_BIT;
+				if(m == 0){
+					sample = 0;
+				}
+				else if(m == 1){
+					sample = (msb_first_code & 1);
+				}
+				else{
+					sample = 1;
+					msb_first_code >>= 1;
+				}
+			}
+			sbuf[counter * BASEBAND_SAMPLES_PER_CHIP + b] = sample;
 		}
 	}
 }
@@ -453,6 +475,7 @@ int main(int argc, char **argv)
 	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(double));
 	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(double));
 	slopebuf    = malloc(BUFFER_SAMPLES * sizeof(double));
+	sample_buf  = malloc(BASEBAND_SAMPLES_PER_CHIP * BASEBAND_CHIPS_TOTAL);
 	readpos 	= 0;
 	writepos 	= 1;
 
@@ -469,6 +492,8 @@ int main(int argc, char **argv)
 	pthread_cond_init(&fm_cond, NULL);
 	pthread_cond_init(&am_cond, NULL);
 	pthread_attr_init(&attr);
+
+	prepare_baseband(code, sample_buf);
 
 	fl2k_open(&dev, (uint32_t)dev_index);
 	if (NULL == dev) {
@@ -495,7 +520,7 @@ int main(int argc, char **argv)
 
 	/* Calculate needed constants */
 	carrier_per_signal = (int)((double) samp_rate * chiptime_us/(1000000*BASEBAND_SAMPLES_PER_CHIP) + 0.5);
-	printf("Cps : %d\n", carrier_per_signal);
+	printf("Cps :\t%d\n", carrier_per_signal);
 #ifndef _WIN32
 	sigact.sa_handler = sighandler;
 	sigemptyset(&sigact.sa_mask);
@@ -513,9 +538,6 @@ int main(int argc, char **argv)
 
 out:
 	fl2k_close(dev);
-
-	if (file != stdin)
-		fclose(file);
 
 	free(ampbuf);
 	free(slopebuf);
