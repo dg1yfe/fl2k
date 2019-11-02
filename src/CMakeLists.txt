@@ -79,7 +79,8 @@ add_executable(fl2k_file fl2k_file.c)
 add_executable(fl2k_tcp fl2k_tcp.c)
 add_executable(fl2k_test fl2k_test.c)
 add_executable(fl2k_fm fl2k_fm.c rds_waveforms.c rds_mod.c)
-set(INSTALL_TARGETS libosmo-fl2k_shared libosmo-fl2k_static fl2k_file fl2k_tcp fl2k_test fl2k_fm)
+add_executable(fl2k_garage fl2k_garage.c)
+set(INSTALL_TARGETS libosmo-fl2k_shared libosmo-fl2k_static fl2k_file fl2k_tcp fl2k_test fl2k_fm fl2k_garage)
 
 target_link_libraries(fl2k_file libosmo-fl2k_shared 
     ${LIBUSB_LIBRARIES}
@@ -101,10 +102,16 @@ target_link_libraries(fl2k_fm libosmo-fl2k_shared
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
+target_link_libraries(fl2k_garage libosmo-fl2k_shared 
+    ${LIBUSB_LIBRARIES}
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
 
 if(UNIX)
 target_link_libraries(fl2k_test m)
 target_link_libraries(fl2k_fm m)
+target_link_libraries(fl2k_garage m)
 endif()
 
 if(WIN32 AND NOT MINGW)
@@ -112,10 +119,12 @@ target_link_libraries(fl2k_file libgetopt_static)
 target_link_libraries(fl2k_tcp ws2_32 libgetopt_static)
 target_link_libraries(fl2k_test libgetopt_static)
 target_link_libraries(fl2k_fm libgetopt_static)
+target_link_libraries(fl2k_garage libgetopt_static)
 set_property(TARGET fl2k_file APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_tcp APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_test APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_fm APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
+set_property(TARGET fl2k_garage APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 endif()
 
 if(MINGW)
