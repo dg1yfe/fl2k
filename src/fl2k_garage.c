@@ -475,7 +475,7 @@ int main(int argc, char **argv)
 	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(double));
 	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(double));
 	slopebuf    = malloc(BUFFER_SAMPLES * sizeof(double));
-	sample_buf  = malloc(BASEBAND_SAMPLES_PER_CHIP * BASEBAND_CHIPS_TOTAL);
+	sample_buf  = malloc((BASEBAND_SAMPLES_PER_CHIP * BASEBAND_CHIPS_TOTAL) * sizeof(int16_t));
 	readpos 	= 0;
 	writepos 	= 1;
 
