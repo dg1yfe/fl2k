@@ -68,13 +68,10 @@
 fl2k_dev_t *dev = NULL;
 int do_exit = 0;
 
-pthread_t fm_thread;
 pthread_t am_thread;
 pthread_mutex_t cb_mutex;
-pthread_mutex_t fm_mutex;
 pthread_mutex_t am_mutex;
 pthread_cond_t cb_cond;
-pthread_cond_t fm_cond;
 pthread_cond_t am_cond;
 
 int16_t *sample_buf;
@@ -117,7 +114,7 @@ sighandler(int signum)
 		fprintf(stderr, "Signal caught, exiting!\n");
 		fl2k_stop_tx(dev);
 		do_exit = 1;
-		pthread_cond_signal(&fm_cond);
+		pthread_cond_signal(&am_cond);
 		return TRUE;
 	}
 	return FALSE;
@@ -128,7 +125,7 @@ static void sighandler(int signum)
 	fprintf(stderr, "Signal caught, exiting!\n");
 	fl2k_stop_tx(dev);
 	do_exit = 1;
-	pthread_cond_signal(&fm_cond);
+	pthread_cond_signal(&am_cond);
 }
 #endif
 
@@ -343,7 +340,7 @@ void am_modulator(const int code_input)
 				writepos %= BUFFER_SAMPLES;
 			}
 		} else {
-			pthread_cond_wait(&fm_cond, &fm_mutex);
+			pthread_cond_wait(&am_cond, &am_mutex);
 		}
 	}
 }
@@ -396,7 +393,7 @@ void fl2k_callback(fl2k_data_info_t *data_info)
 	if (data_info->device_error) {
 		fprintf(stderr, "Device error, exiting.\n");
 		do_exit = 1;
-		pthread_cond_signal(&fm_cond);
+		pthread_cond_signal(&am_cond);
 	}
 
 	pthread_cond_signal(&cb_cond);
@@ -486,10 +483,8 @@ int main(int argc, char **argv)
 	fprintf(stderr, "Chip period:\t%d us\n", chiptime_us);
 
 	pthread_mutex_init(&cb_mutex, NULL);
-	pthread_mutex_init(&fm_mutex, NULL);
 	pthread_mutex_init(&am_mutex, NULL);
 	pthread_cond_init(&cb_cond, NULL);
-	pthread_cond_init(&fm_cond, NULL);
 	pthread_cond_init(&am_cond, NULL);
 	pthread_attr_init(&attr);
 
