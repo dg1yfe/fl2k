@@ -355,8 +355,8 @@ void prepare_baseband(const int code_input, int16_t * sbuf){
 	msb_first_code = 0;
 	// change to msb first and invert
 	for(b = 0;b<12;b++){
-		msb_first_code |= code_input & (1<<b) ? 0 : 1;
 		msb_first_code <<= 1;
+		msb_first_code |= code_input & (1<<b) ? 0 : 1;
 	}
 
 	sample_no = 0;
@@ -380,7 +380,9 @@ void prepare_baseband(const int code_input, int16_t * sbuf){
 				}
 				else{
 					sample = 1;
-					msb_first_code >>= 1;
+					if(b == BASEBAND_SAMPLES_PER_CHIP-1){
+						msb_first_code >>= 1;
+					}
 				}
 			}
 			sbuf[counter * BASEBAND_SAMPLES_PER_CHIP + b] = sample;
