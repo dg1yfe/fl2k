@@ -200,11 +200,11 @@ static inline int8_t dds_real(dds_t *dds)
 	dds->phase &= 0xffffffff;
 
 	//amp = 255;
-	amp_i = creal(dds->amplitude) * 32768.0;		// 0..15
-	amp_q = cimag(dds->amplitude) * 32768.0;
-	amp_i = amp_i * trig_table.sine[tmp];           // 0..31
-    amp_q = amp_q * trig_table.cosine[tmp];         // 0..31
-	amp8 = (int8_t) ((amp_i + amp_q) >> 25);        // 0..32 >> 25 => 0..8
+	amp_i = creal(dds->amplitude) * 23170.0;		// 0..15, * 1/SQRT(2)
+	amp_q = cimag(dds->amplitude) * 23170.0;
+	amp_i = amp_i * trig_table.sine[tmp];           // 0..31, * 1/SQRT(2)
+    amp_q = amp_q * trig_table.cosine[tmp];         // 0..31, * 1/SQRT(2)
+	amp8 = (int8_t) ((amp_i + amp_q) >> 24);        // 0..31 >> 24 => 0..8
 	dds->amplitude += dds->ampslope;
 	return amp8;
 }
