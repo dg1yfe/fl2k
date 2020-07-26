@@ -326,7 +326,7 @@ void iq_modulator()
 			}
 
 			for (i = 0; i < len; i++) {
-				sample = (double) baseband_buf[i][0] / 32768.0 + I * (double) baseband_buf[i][0] / 32768.0;
+				sample = (double) baseband_buf[i][0] / 32768.0 + I * (double) baseband_buf[i][1] / 32768.0;
 
 				/* Modulate and buffer the sample */
 				lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
