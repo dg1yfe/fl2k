@@ -80,35 +80,35 @@ add_executable(fl2k_tcp fl2k_tcp.c)
 add_executable(fl2k_test fl2k_test.c)
 add_executable(fl2k_fm fl2k_fm.c rds_waveforms.c rds_mod.c)
 add_executable(fl2k_garage fl2k_garage.c)
-add_executable(fl2k_am fl2k_am.c)
-set(INSTALL_TARGETS libosmo-fl2k_shared libosmo-fl2k_static fl2k_file fl2k_tcp fl2k_test fl2k_fm fl2k_garage fl2k_am)
+add_executable(fl2k_iq fl2k_iq.c)
+set(INSTALL_TARGETS libosmo-fl2k_shared libosmo-fl2k_static fl2k_file fl2k_tcp fl2k_test fl2k_fm fl2k_garage fl2k_iq)
 
-target_link_libraries(fl2k_file libosmo-fl2k_shared 
+target_link_libraries(fl2k_file libosmo-fl2k_shared
     ${LIBUSB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
-target_link_libraries(fl2k_tcp libosmo-fl2k_shared 
+target_link_libraries(fl2k_tcp libosmo-fl2k_shared
     ${LIBUSB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
-target_link_libraries(fl2k_test libosmo-fl2k_shared 
+target_link_libraries(fl2k_test libosmo-fl2k_shared
     ${LIBUSB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
-target_link_libraries(fl2k_fm libosmo-fl2k_shared 
+target_link_libraries(fl2k_fm libosmo-fl2k_shared
     ${LIBUSB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
-target_link_libraries(fl2k_garage libosmo-fl2k_shared 
+target_link_libraries(fl2k_garage libosmo-fl2k_shared
     ${LIBUSB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
-target_link_libraries(fl2k_am libosmo-fl2k_shared 
+target_link_libraries(fl2k_iq libosmo-fl2k_shared
     ${LIBUSB_LIBRARIES}
     ${CMAKE_THREAD_LIBS_INIT}
 )
@@ -118,7 +118,7 @@ if(UNIX)
 target_link_libraries(fl2k_test m)
 target_link_libraries(fl2k_fm m)
 target_link_libraries(fl2k_garage m)
-target_link_libraries(fl2k_am m)
+target_link_libraries(fl2k_iq m)
 endif()
 
 if(WIN32 AND NOT MINGW)
@@ -127,13 +127,13 @@ target_link_libraries(fl2k_tcp ws2_32 libgetopt_static)
 target_link_libraries(fl2k_test libgetopt_static)
 target_link_libraries(fl2k_fm libgetopt_static)
 target_link_libraries(fl2k_garage libgetopt_static)
-target_link_libraries(fl2k_am libgetopt_static)
+target_link_libraries(fl2k_iq libgetopt_static)
 set_property(TARGET fl2k_file APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_tcp APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_test APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_fm APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 set_property(TARGET fl2k_garage APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
-set_property(TARGET fl2k_am APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
+set_property(TARGET fl2k_iq APPEND PROPERTY COMPILE_DEFINITIONS "libosmo-fl2k_STATIC" )
 endif()
 
 if(MINGW)

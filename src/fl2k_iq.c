@@ -2,6 +2,10 @@
  * osmo-fl2k, turns FL2000-based USB 3.0 to VGA adapters into
  * low cost DACs
  *
+ * fl2k-iq
+ * Copyright (C) 2020 by Felix Erckenbrecht <eligs@eligs.de>
+ *
+ * based on fl2k-fm code:
  * Copyright (C) 2016-2018 by Steve Markgraf <steve@steve-m.de>
  *
  * based on FM modulator code from VGASIG:
@@ -41,6 +45,7 @@
 #endif
 
 #include <math.h>
+#include <complex.h>
 #include <pthread.h>
 
 #include "osmo-fl2k.h"
@@ -50,16 +55,16 @@
 #define BUFFER_SAMPLES		(1 << BUFFER_SAMPLES_SHIFT)
 #define BUFFER_SAMPLES_MASK	((1 << BUFFER_SAMPLES_SHIFT)-1)
 
-#define AUDIO_BUF_SIZE		2048
+#define BASEBAND_BUF_SIZE		2048
 
 fl2k_dev_t *dev = NULL;
 int do_exit = 0;
 
-pthread_t am_thread;
+pthread_t iq_thread;
 pthread_mutex_t cb_mutex;
 pthread_mutex_t am_mutex;
 pthread_cond_t cb_cond;
-pthread_cond_t am_cond;
+pthread_cond_t iq_cond;
 
 FILE *file;
 int8_t *txbuf = NULL;
@@ -69,24 +74,22 @@ int8_t *buf2 = NULL;
 
 uint32_t samp_rate = 100000000;
 
-int carrier_freq = 1440000;
-int carrier_per_signal;
-int input_freq = 44100;
+int base_freq = 1440000;
+int rf_to_baseband_sample_ratio;
+int input_freq = 48000;
 
-double mod_index = 0.9;
-double *ampbuf;
-double *slopebuf; 
+complex double *ampbuf;
+complex double *slopebuf;
 int writepos, readpos;
 
 void usage(void)
 {
 	fprintf(stderr,
-		"fl2k_fm, an FM modulator for FL2K VGA dongles\n\n"
+		"fl2k_iq, an IQ modulator for FL2K VGA dongles\n\n"
 		"Usage:"
 		"\t[-d device index (default: 0)]\n"
-		"\t[-c carrier frequency (default: 1440 kHz)]\n"
-		"\t[-m Modulation index (default: 0.9)]\n"
-		"\t[-i input audio sample rate (default: 44100 Hz for mono FM)]\n"
+		"\t[-c center frequency (default: 1440 kHz)]\n"
+		"\t[-i input baseband sample rate (default: 48000 Hz)]\n"
 		"\t[-s samplerate in Hz (default: 100 MS/s)]\n"
 		"\tfilename (use '-' to read from stdin)\n\n"
 	);
@@ -101,7 +104,7 @@ sighandler(int signum)
 		fprintf(stderr, "Signal caught, exiting!\n");
 		fl2k_stop_tx(dev);
 		do_exit = 1;
-		pthread_cond_signal(&am_cond);
+		pthread_cond_signal(&iq_cond);
 		return TRUE;
 	}
 	return FALSE;
@@ -112,7 +115,7 @@ static void sighandler(int signum)
 	fprintf(stderr, "Signal caught, exiting!\n");
 	fl2k_stop_tx(dev);
 	do_exit = 1;
-	pthread_cond_signal(&am_cond);
+	pthread_cond_signal(&iq_cond);
 }
 #endif
 
@@ -128,21 +131,26 @@ static void sighandler(int signum)
 #define DDS_2PI		(M_PI * 2)		/* 2 * Pi */
 #define DDS_3PI2	(M_PI_2 * 3)		/* 3/2 * pi */
 
-#define SIN_TABLE_ORDER	8
-#define SIN_TABLE_SHIFT	(32 - SIN_TABLE_ORDER)
-#define SIN_TABLE_LEN	(1 << SIN_TABLE_ORDER)
+#define TRIG_TABLE_ORDER	8
+#define TRIG_TABLE_SHIFT	(32 - TRIG_TABLE_ORDER)
+#define TRIG_TABLE_LEN	(1 << TRIG_TABLE_ORDER)
 #define ANG_INCR	(0xffffffff / DDS_2PI)
 
-int16_t sine_table[SIN_TABLE_LEN];
-int sine_table_init = 0;
+struct trigonometric_table_S {
+    int     initialized;
+    int16_t sine[TRIG_TABLE_LEN];
+    int16_t cosine[TRIG_TABLE_LEN];
+};
+
+static struct trigonometric_table_S trig_table = { .initialized = 0 };
 
 typedef struct {
 	double sample_freq;
 	double freq;
 	unsigned long int phase;
 	unsigned long int phase_step;
-	int32_t amplitude;
-	double ampslope;
+	complex double amplitude;
+	complex double ampslope;
 } dds_t;
 
 static inline void dds_set_freq(dds_t *dds, double freq)
@@ -151,9 +159,9 @@ static inline void dds_set_freq(dds_t *dds, double freq)
 	dds->phase_step = (freq / dds->sample_freq) * 2 * M_PI * ANG_INCR;
 }
 
-static inline void dds_set_amp(dds_t *dds, double amplitude, double ampslope)
+static inline void dds_set_amp(dds_t *dds, complex double amplitude, complex double ampslope)
 {
-	dds->amplitude = (int32_t) (amplitude * 32768.0);
+	dds->amplitude = amplitude;
 	dds->ampslope  = ampslope;
 }
 
@@ -167,12 +175,14 @@ dds_t dds_init(double sample_freq, double freq, double phase, double amp)
 	dds_set_freq(&dds, freq);
 	dds_set_amp(&dds, amp, 0);
 	/* Initialize sine table, prescaled for 16 bit signed integer */
-	if (!sine_table_init) {
-		double incr = 1.0 / (double)SIN_TABLE_LEN;
-		for (i = 0; i < SIN_TABLE_LEN; i++)
-			sine_table[i] = sin(incr * i * DDS_2PI) * 32767;
+	if (!trig_table.initialized) {
+		double incr = 1.0 / (double)TRIG_TABLE_LEN;
+		for (i = 0; i < TRIG_TABLE_LEN; i++){
+			trig_table.sine[i]   = sin(incr * i * DDS_2PI) * 32767;
+            trig_table.cosine[i] = cos(incr * i * DDS_2PI) * 32767;
+		}
 
-		sine_table_init = 1;
+		trig_table.initialized = 1;
 	}
 
 	return dds;
@@ -181,19 +191,21 @@ dds_t dds_init(double sample_freq, double freq, double phase, double amp)
 static inline int8_t dds_real(dds_t *dds)
 {
 	int tmp;
-	int32_t amp;
+	int32_t amp_i, amp_q;
 	int8_t amp8;
 
 	// advance dds generator
-	tmp = dds->phase >> SIN_TABLE_SHIFT;
+	tmp = dds->phase >> TRIG_TABLE_SHIFT;
 	dds->phase += dds->phase_step;
 	dds->phase &= 0xffffffff;
 
 	//amp = 255;
-	amp = dds->amplitude;		// 0..15
-	amp = amp * sine_table[tmp];	// 0..31
-	amp8 = (int8_t) (amp >> 24);
-	//dds->amplitude += dds->ampslope;
+	amp_i = creal(dds->amplitude) * 32768.0;		// 0..15
+	amp_q = cimag(dds->amplitude) * 32768.0;
+	amp_i = amp_i * trig_table.sine[tmp];           // 0..31
+    amp_q = amp_q * trig_table.cosine[tmp];         // 0..31
+	amp8 = (int8_t) ((amp_i + amp_q) >> 25);        // 0..32 >> 25 => 0..8
+	dds->amplitude += dds->ampslope;
 	return amp8;
 }
 
@@ -208,29 +220,29 @@ static inline void dds_real_buf(dds_t *dds, int8_t *buf, int count)
 
 /* Generate the radio signal using the pre-calculated amplitude information
  * in the amp buffer */
-static void *am_worker(void *arg)
+static void *iq_worker(void *arg)
 {
 	register double freq;
 	register double tmp;
-	dds_t carrier;
+	dds_t base_signal;
 	int8_t *tmp_ptr;
 	uint32_t len = 0;
 	uint32_t readlen, remaining;
 	int buf_prefilled = 0;
 
 	/* Prepare the oscillators */
-	carrier = dds_init(samp_rate, carrier_freq, 0, 1);
+	base_signal = dds_init(samp_rate, base_freq, 0, 1);
 
 	while (!do_exit) {
-		dds_set_amp(&carrier, ampbuf[readpos], slopebuf[readpos]);
+		dds_set_amp(&base_signal, ampbuf[readpos], slopebuf[readpos]);
 		readpos++;
 		readpos &= BUFFER_SAMPLES_MASK;
 
 		/* check if we reach the end of the buffer */
-		if ((len + carrier_per_signal) > FL2K_BUF_LEN) {
+		if ((len + rf_to_baseband_sample_ratio) > FL2K_BUF_LEN) {
 			readlen = FL2K_BUF_LEN - len;
-			remaining = carrier_per_signal - readlen;
-			dds_real_buf(&carrier, &ambuf[len], readlen);
+			remaining = rf_to_baseband_sample_ratio - readlen;
+			dds_real_buf(&base_signal, &ambuf[len], readlen);
 
 			if (buf_prefilled) {
 				/* swap buffers */
@@ -240,15 +252,15 @@ static void *am_worker(void *arg)
 				pthread_cond_wait(&cb_cond, &cb_mutex);
 			}
 
-			dds_real_buf(&carrier, ambuf, remaining);
+			dds_real_buf(&base_signal, ambuf, remaining);
 			len = remaining;
 
 			buf_prefilled = 1;
 		} else {
-			dds_real_buf(&carrier, &ambuf[len], carrier_per_signal);
-			len += carrier_per_signal;
+			dds_real_buf(&base_signal, &ambuf[len], rf_to_baseband_sample_ratio);
+			len += rf_to_baseband_sample_ratio;
 		}
-		pthread_cond_signal(&am_cond);
+		pthread_cond_signal(&iq_cond);
 	}
 
 	pthread_exit(NULL);
@@ -270,13 +282,13 @@ static inline int writelen(int maxlen)
 	return r;
 }
 
-static inline double modulate_sample_am(int lastwritepos, double lastamp, double sample)
+static inline complex double modulate_sample_iq(const int lastwritepos, const complex double lastamp, const complex double sample)
 {
-	double amp, slope;
+	complex double amp, slope;
 
-	/* Calculate modulator amplitude at this point to lessen
+	/* Calculate modulator amplitudes at this point to lessen
 	 * the calculations needed in the signal generator */
-	amp = 1 - ((1+sample) * mod_index)/2;
+	amp = sample;
 
 	/* What we do here is calculate a linear "slope" from
 	the previous sample to this one. This is then used by
@@ -285,27 +297,27 @@ static inline double modulate_sample_am(int lastwritepos, double lastamp, double
 	the dds parameters. In fact this gives us a very
 	efficient and pretty good interpolation filter. */
 	slope = amp - lastamp;
-	slope /= carrier_per_signal;
+	slope = slope * 1.0/ (double) rf_to_baseband_sample_ratio;
 	slopebuf[lastwritepos] = slope;
 	ampbuf[writepos]       = amp;
 
 	return amp;
 }
 
-void am_modulator()
+void iq_modulator()
 {
 	unsigned int i;
 	size_t len;
 	double freq;
-	double lastamp = 0;
-	int16_t audio_buf[AUDIO_BUF_SIZE];
+	complex double lastamp = 0;
+	int16_t baseband_buf[BASEBAND_BUF_SIZE][2];
 	uint32_t lastwritepos = writepos;
-	double sample;
+	complex double sample;
 
 	while (!do_exit) {
-		len = writelen(AUDIO_BUF_SIZE);
+		len = writelen(BASEBAND_BUF_SIZE);
 		if (len > 1) {
-			len = fread(audio_buf, 2, len, file);
+			len = fread(baseband_buf, 4, len, file);
 
 			if (len == 0){
 				if(ferror(file)){
@@ -314,15 +326,15 @@ void am_modulator()
 			}
 
 			for (i = 0; i < len; i++) {
-				sample = (double) audio_buf[i] / 32768.0;
+				sample = (double) baseband_buf[i][0] / 32768.0 + I * (double) baseband_buf[i][0] / 32768.0;
 
 				/* Modulate and buffer the sample */
-				lastamp = modulate_sample_am(lastwritepos, lastamp, sample);
+				lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
 				lastwritepos = writepos++;
 				writepos %= BUFFER_SAMPLES;
 			}
 		} else {
-			pthread_cond_wait(&am_cond, &am_mutex);
+			pthread_cond_wait(&iq_cond, &am_mutex);
 		}
 	}
 }
@@ -333,7 +345,7 @@ void fl2k_callback(fl2k_data_info_t *data_info)
 	if (data_info->device_error) {
 		fprintf(stderr, "Device error, exiting.\n");
 		do_exit = 1;
-		pthread_cond_signal(&am_cond);
+		pthread_cond_signal(&iq_cond);
 	}
 
 	pthread_cond_signal(&cb_cond);
@@ -375,14 +387,11 @@ int main(int argc, char **argv)
 			dev_index = (uint32_t)atoi(optarg);
 			break;
 		case 'c':
-			carrier_freq = (uint32_t)atof(optarg);
+			base_freq = (uint32_t)atof(optarg);
 			break;
 		case 'i':
 			input_freq = (uint32_t)atof(optarg);
 			input_freq_specified = 1;
-			break;
-		case 'm':
-			mod_index = atof(optarg);
 			break;
 		case 's':
 			samp_rate = (uint32_t)atof(optarg);
@@ -434,13 +443,12 @@ int main(int argc, char **argv)
 	writepos 	= 1;
 
 	fprintf(stderr, "Samplerate:\t%3.2f MHz\n", (double)samp_rate/1000000);
-	fprintf(stderr, "Carrier:\t%5.0f kHz\n", (double)carrier_freq/1000);
-	fprintf(stderr, "Mod Index:\t%2.1f %%\n", (double)mod_index*100);
+	fprintf(stderr, "Center frequency:\t%5.0f kHz\n", (double)base_freq/1000);
 
 	pthread_mutex_init(&cb_mutex, NULL);
 	pthread_mutex_init(&am_mutex, NULL);
 	pthread_cond_init(&cb_cond, NULL);
-	pthread_cond_init(&am_cond, NULL);
+	pthread_cond_init(&iq_cond, NULL);
 	pthread_attr_init(&attr);
 
 	fl2k_open(&dev, (uint32_t)dev_index);
@@ -449,9 +457,9 @@ int main(int argc, char **argv)
 		goto out;
 	}
 
-	r = pthread_create(&am_thread, &attr, am_worker, NULL);
+	r = pthread_create(&iq_thread, &attr, iq_worker, NULL);
 	if (r < 0) {
-		fprintf(stderr, "Error spawning AM worker thread!\n");
+		fprintf(stderr, "Error spawning IQ worker thread!\n");
 		goto out;
 	}
 
@@ -467,7 +475,7 @@ int main(int argc, char **argv)
 	samp_rate = fl2k_get_sample_rate(dev);
 
 	/* Calculate needed constants */
-	carrier_per_signal = samp_rate / input_freq;
+	rf_to_baseband_sample_ratio = samp_rate / input_freq;
 
 #ifndef _WIN32
 	sigact.sa_handler = sighandler;
@@ -482,7 +490,7 @@ int main(int argc, char **argv)
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
 
-	am_modulator();
+	iq_modulator();
 
 out:
 	fl2k_close(dev);
