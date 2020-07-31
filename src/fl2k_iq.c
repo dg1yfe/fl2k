@@ -446,8 +446,8 @@ int main(int argc, char **argv)
 	txbuf = buf2;
 
 	/* Decoded audio */
-	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(double));
-	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(double));
+	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(double complex));
+	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(double complex));
 	readpos 	= 0;
 	writepos 	= 1;
 
