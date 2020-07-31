@@ -302,8 +302,8 @@ static inline complex double modulate_sample_iq(const int lastwritepos, const co
 	efficient and pretty good interpolation filter. */
 	slope = amp - lastamp;
 	slope = slope * 1.0/ (double) rf_to_baseband_sample_ratio;
-	slopebuf[lastwritepos] = slope;
-	ampbuf[writepos]       = amp;
+	slopebuf[writepos] = slope;
+	ampbuf[writepos]   = lastamp;
 
 	return amp;
 }
