@@ -249,7 +249,9 @@ static void *iq_worker(void *arg)
 				tmp_ptr = ambuf;
 				ambuf = txbuf;
 				txbuf = tmp_ptr;
+				pthread_mutex_lock(&cb_mutex);
 				pthread_cond_wait(&cb_cond, &cb_mutex);
+				pthread_mutex_unlock(&cb_mutex);
 			}
 
 			dds_real_buf(&base_signal, ambuf, remaining);
@@ -260,7 +262,9 @@ static void *iq_worker(void *arg)
 			dds_real_buf(&base_signal, &ambuf[len], rf_to_baseband_sample_ratio);
 			len += rf_to_baseband_sample_ratio;
 		}
+		pthread_mutex_lock(&iq_mutex);
 		pthread_cond_signal(&iq_cond);
+		pthread_mutex_unlock(&iq_mutex);
 	}
 
 	pthread_exit(NULL);
@@ -334,7 +338,9 @@ void iq_modulator()
 				writepos %= BUFFER_SAMPLES;
 			}
 		} else {
+			pthread_mutex_lock(&iq_mutex);
 			pthread_cond_wait(&iq_cond, &iq_mutex);
+			pthread_mutex_unlock(&iq_mutex);
 		}
 	}
 }
@@ -345,7 +351,9 @@ void fl2k_callback(fl2k_data_info_t *data_info)
 	if (data_info->device_error) {
 		fprintf(stderr, "Device error, exiting.\n");
 		do_exit = 1;
+		pthread_mutex_lock(&iq_mutex);
 		pthread_cond_signal(&iq_cond);
+		pthread_mutex_unlock(&iq_mutex);
 	}
 
 	pthread_cond_signal(&cb_cond);
