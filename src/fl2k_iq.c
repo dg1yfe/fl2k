@@ -78,8 +78,8 @@ int base_freq = 1440000;
 int rf_to_baseband_sample_ratio;
 int input_freq = 48000;
 
-complex double *ampbuf;
-complex double *slopebuf;
+complex float *ampbuf;
+complex float *slopebuf;
 int writepos, readpos;
 
 void usage(void)
@@ -145,27 +145,27 @@ struct trigonometric_table_S {
 static struct trigonometric_table_S trig_table = { .initialized = 0 };
 
 typedef struct {
-	double sample_freq;
-	double freq;
+	float sample_freq;
+	float freq;
 	unsigned long int phase;
 	unsigned long int phase_step;
-	complex double amplitude;
-	complex double ampslope;
+	complex float amplitude;
+	complex float ampslope;
 } dds_t;
 
-static inline void dds_set_freq(dds_t *dds, double freq)
+static inline void dds_set_freq(dds_t *dds, float freq)
 {
 	dds->freq = freq;
 	dds->phase_step = (freq / dds->sample_freq) * 2 * M_PI * ANG_INCR;
 }
 
-static inline void dds_set_amp(dds_t *dds, complex double amplitude, complex double ampslope)
+static inline void dds_set_amp(dds_t *dds, complex float amplitude, complex float ampslope)
 {
 	dds->amplitude = amplitude;
 	dds->ampslope  = ampslope;
 }
 
-dds_t dds_init(double sample_freq, double freq, double phase, double amp)
+dds_t dds_init(float sample_freq, float freq, float phase, float amp)
 {
 	dds_t dds;
 	int i;
@@ -176,7 +176,7 @@ dds_t dds_init(double sample_freq, double freq, double phase, double amp)
 	dds_set_amp(&dds, amp, 0);
 	/* Initialize sine table, prescaled for 16 bit signed integer */
 	if (!trig_table.initialized) {
-		double incr = 1.0 / (double)TRIG_TABLE_LEN;
+		float incr = 1.0 / (float)TRIG_TABLE_LEN;
 		for (i = 0; i < TRIG_TABLE_LEN; i++){
 			trig_table.sine[i]   = sin(incr * i * DDS_2PI) * 32767;
             trig_table.cosine[i] = cos(incr * i * DDS_2PI) * 32767;
@@ -222,8 +222,8 @@ static inline void dds_real_buf(dds_t *dds, int8_t *buf, int count)
  * in the amp buffer */
 static void *iq_worker(void *arg)
 {
-	register double freq;
-	register double tmp;
+	register float freq;
+	register float tmp;
 	dds_t base_signal;
 	int8_t *tmp_ptr;
 	uint32_t len = 0;
@@ -286,9 +286,10 @@ static inline int writelen(int maxlen)
 	return r;
 }
 
-static inline complex double modulate_sample_iq(const int lastwritepos, const complex double lastamp, const complex double sample)
+static inline float complex modulate_sample_iq(const int lastwritepos, const float complex lastamp, const float complex sample)
 {
-	complex double amp, slope;
+	float complex amp;
+	float complex slope;
 
 	/* Calculate modulator amplitudes at this point to lessen
 	 * the calculations needed in the signal generator */
@@ -301,7 +302,7 @@ static inline complex double modulate_sample_iq(const int lastwritepos, const co
 	the dds parameters. In fact this gives us a very
 	efficient and pretty good interpolation filter. */
 	slope = amp - lastamp;
-	slope = slope * 1.0/ (double) rf_to_baseband_sample_ratio;
+	slope = slope * 1.0/ (float) rf_to_baseband_sample_ratio;
 	slopebuf[writepos] = slope;
 	ampbuf[writepos]   = lastamp;
 
@@ -313,11 +314,11 @@ void iq_modulator()
 {
 	unsigned int i;
 	size_t len;
-	double freq;
-	complex double lastamp = 0;
+	float freq;
+	float complex lastamp = 0;
 	int16_t baseband_buf[BASEBAND_BUF_SIZE][2];
 	uint32_t lastwritepos = writepos;
-	complex double sample;
+	float complex sample;
 
 	while (!do_exit) {
 		len = writelen(BASEBAND_BUF_SIZE);
@@ -331,7 +332,7 @@ void iq_modulator()
 			}
 
 			for (i = 0; i < len; i++) {
-				sample = (double) baseband_buf[i][0] / 32768.0 + I * (double) baseband_buf[i][1] / 32768.0;
+				sample = (float) baseband_buf[i][0] / 32768.0 + I * (float) baseband_buf[i][1] / 32768.0;
 
 				/* Modulate and buffer the sample */
 				lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
@@ -446,13 +447,13 @@ int main(int argc, char **argv)
 	txbuf = buf2;
 
 	/* Decoded audio */
-	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(double complex));
-	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(double complex));
+	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(float complex));
+	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(float complex));
 	readpos 	= 0;
 	writepos 	= 1;
 
-	fprintf(stderr, "Samplerate:\t%3.2f MHz\n", (double)samp_rate/1000000);
-	fprintf(stderr, "Center frequency:\t%5.0f kHz\n", (double)base_freq/1000);
+	fprintf(stderr, "Samplerate:\t%3.2f MHz\n", (float)samp_rate/1000000);
+	fprintf(stderr, "Center frequency:\t%5.0f kHz\n", (float)base_freq/1000);
 
 	pthread_mutex_init(&cb_mutex, NULL);
 	pthread_mutex_init(&iq_mutex, NULL);
