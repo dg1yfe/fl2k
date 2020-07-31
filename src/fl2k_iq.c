@@ -58,7 +58,7 @@
 #define BASEBAND_BUF_SIZE		2048
 
 fl2k_dev_t *dev = NULL;
-int do_exit = 0;
+volatile int do_exit = 0;
 
 pthread_t iq_thread;
 pthread_mutex_t cb_mutex;
@@ -307,6 +307,7 @@ static inline complex double modulate_sample_iq(const int lastwritepos, const co
 
 	return amp;
 }
+
 
 void iq_modulator()
 {
