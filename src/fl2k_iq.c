@@ -72,7 +72,7 @@ int8_t *ambuf = NULL;
 int8_t *buf1 = NULL;
 int8_t *buf2 = NULL;
 
-uint32_t samp_rate = 100000000;
+uint32_t samp_rate = 96000000;
 
 int base_freq = 1440000;
 int rf_to_baseband_sample_ratio;
@@ -90,7 +90,7 @@ void usage(void)
 		"\t[-d device index (default: 0)]\n"
 		"\t[-c center frequency (default: 1440 kHz)]\n"
 		"\t[-i input baseband sample rate (default: 48000 Hz)]\n"
-		"\t[-s samplerate in Hz (default: 100 MS/s)]\n"
+		"\t[-s samplerate in Hz (default: 96 MS/s)]\n"
 		"\tfilename (use '-' to read from stdin)\n\n"
 	);
 	exit(1);
