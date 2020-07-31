@@ -62,7 +62,7 @@ int do_exit = 0;
 
 pthread_t iq_thread;
 pthread_mutex_t cb_mutex;
-pthread_mutex_t am_mutex;
+pthread_mutex_t iq_mutex;
 pthread_cond_t cb_cond;
 pthread_cond_t iq_cond;
 
@@ -334,7 +334,7 @@ void iq_modulator()
 				writepos %= BUFFER_SAMPLES;
 			}
 		} else {
-			pthread_cond_wait(&iq_cond, &am_mutex);
+			pthread_cond_wait(&iq_cond, &iq_mutex);
 		}
 	}
 }
@@ -446,7 +446,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "Center frequency:\t%5.0f kHz\n", (double)base_freq/1000);
 
 	pthread_mutex_init(&cb_mutex, NULL);
-	pthread_mutex_init(&am_mutex, NULL);
+	pthread_mutex_init(&iq_mutex, NULL);
 	pthread_cond_init(&cb_cond, NULL);
 	pthread_cond_init(&iq_cond, NULL);
 	pthread_attr_init(&attr);
