@@ -81,17 +81,19 @@ int input_freq = 48000;
 complex float *ampbuf;
 complex float *slopebuf;
 int writepos, readpos;
+int swap_iq = 0;
 
 void usage(void)
 {
 	fprintf(stderr,
-		"fl2k_iq, an IQ modulator for FL2K VGA dongles\n\n"
-		"Usage:"
-		"\t[-d device index (default: 0)]\n"
-		"\t[-c center frequency (default: 1440 kHz)]\n"
-		"\t[-i input baseband sample rate (default: 48000 Hz)]\n"
-		"\t[-s samplerate in Hz (default: 96 MS/s)]\n"
-		"\tfilename (use '-' to read from stdin)\n\n"
+        "fl2k_iq, an IQ modulator for FL2K VGA dongles\n\n"
+        "Usage:"
+        "\t[-d device index (default: 0)]\n"
+        "\t[-c center frequency (default: 1440 kHz)]\n"
+        "\t[-i input baseband sample rate (default: 48000 Hz)]\n"
+        "\t[-s samplerate in Hz (default: 96 MS/s)]\n"
+        "\t[-w swap I & Q (invert spectrum)\n"
+        "\tfilename (use '-' to read from stdin)\n\n"
 	);
 	exit(1);
 }
@@ -321,6 +323,7 @@ void iq_modulator()
 	float complex sample;
 
 	while (!do_exit) {
+		int swap = swap_iq;
 		len = writelen(BASEBAND_BUF_SIZE);
 		if (len > 1) {
 			len = fread(baseband_buf, 4, len, file);
@@ -332,7 +335,7 @@ void iq_modulator()
 			}
 
 			for (i = 0; i < len; i++) {
-				sample = (float) baseband_buf[i][0] / 32768.0 + I * (float) baseband_buf[i][1] / 32768.0;
+				sample = (float) baseband_buf[i][0+swap] / 32768.0 + I * (float) baseband_buf[i][1-swap] / 32768.0;
 
 				/* Modulate and buffer the sample */
 				lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
@@ -384,7 +387,7 @@ int main(int argc, char **argv)
 	};
 
 	while (1) {
-		opt = getopt_long(argc, argv, "d:c:i:s:", long_options, &option_index);
+		opt = getopt_long(argc, argv, "wd:c:i:s:", long_options, &option_index);
 
 		/* end of options reached */
 		if (opt == -1)
@@ -405,6 +408,9 @@ int main(int argc, char **argv)
 			break;
 		case 's':
 			samp_rate = (uint32_t)atof(optarg);
+			break;
+		case 'w':
+			swap_iq = 1;
 			break;
 		default:
 			usage();
@@ -452,8 +458,10 @@ int main(int argc, char **argv)
 	readpos 	= 0;
 	writepos 	= 1;
 
-	fprintf(stderr, "Samplerate:\t%3.2f MHz\n", (float)samp_rate/1000000);
-	fprintf(stderr, "Center frequency:\t%5.0f kHz\n", (float)base_freq/1000);
+	fprintf(stderr, "Samplerate:       %3.2f MHz\n", (float)samp_rate/1000000);
+	fprintf(stderr, "Center frequency: %5.0f kHz\n", (float)base_freq/1000);
+	if(swap_iq)
+		fprintf(stderr, "Spectral inversion active.\n");
 
 	pthread_mutex_init(&cb_mutex, NULL);
 	pthread_mutex_init(&iq_mutex, NULL);
