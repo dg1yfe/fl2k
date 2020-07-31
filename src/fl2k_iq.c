@@ -382,7 +382,7 @@ int main(int argc, char **argv)
 	};
 
 	while (1) {
-		opt = getopt_long(argc, argv, "d:c:m:i:s:", long_options, &option_index);
+		opt = getopt_long(argc, argv, "d:c:i:s:", long_options, &option_index);
 
 		/* end of options reached */
 		if (opt == -1)
