@@ -466,10 +466,12 @@ int main(int argc, char **argv)
 	readpos 	= 0;
 	writepos 	= 1;
 
-	fprintf(stderr, "Samplerate:       %3.2f MHz\n", (float)samp_rate/1000000);
-	fprintf(stderr, "Center frequency: %5.0f kHz\n", (float)base_freq/1000);
+	fprintf(stdout, "Samplerate:       %3.2f MHz\n", (float)samp_rate/1000000);
+	fprintf(stdout, "Center frequency: %5.0f kHz\n", (float)base_freq/1000);
 	if(swap_iq)
-		fprintf(stderr, "Spectral inversion active.\n");
+		fprintf(stdout, "Spectral inversion active.\n");
+	if(ignore_eof)
+		fprintf(stdout, "Ignoring EOF.\n");
 
 	pthread_mutex_init(&cb_mutex, NULL);
 	pthread_mutex_init(&iq_mutex, NULL);
