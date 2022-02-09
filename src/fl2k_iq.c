@@ -82,6 +82,7 @@ complex float *ampbuf;
 complex float *slopebuf;
 int writepos, readpos;
 int swap_iq = 0;
+int ignore_eof = 0;
 
 void usage(void)
 {
@@ -93,6 +94,7 @@ void usage(void)
         "\t[-i input baseband sample rate (default: 48000 Hz)]\n"
         "\t[-s samplerate in Hz (default: 96 MS/s)]\n"
         "\t[-w swap I & Q (invert spectrum)\n"
+        "\t[-e ignore EOF\n"
         "\tfilename (use '-' to read from stdin)\n\n"
 	);
 	exit(1);
@@ -332,6 +334,9 @@ void iq_modulator()
 				if(ferror(file)){
 					do_exit = 1;
 				}
+				if(!ignore_eof && feof(file)){
+					do_exit = 1;
+				}
 			}
 
 			for (i = 0; i < len; i++) {
@@ -387,7 +392,7 @@ int main(int argc, char **argv)
 	};
 
 	while (1) {
-		opt = getopt_long(argc, argv, "wd:c:i:s:", long_options, &option_index);
+		opt = getopt_long(argc, argv, "ewd:c:i:s:", long_options, &option_index);
 
 		/* end of options reached */
 		if (opt == -1)
@@ -411,6 +416,9 @@ int main(int argc, char **argv)
 			break;
 		case 'w':
 			swap_iq = 1;
+			break;
+		case 'e':
+			ignore_eof = 1;
 			break;
 		default:
 			usage();
