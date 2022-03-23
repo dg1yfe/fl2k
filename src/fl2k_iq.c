@@ -49,7 +49,10 @@
 #include <pthread.h>
 
 #include "osmo-fl2k.h"
-#include "rds_mod.h"
+
+
+enum inputType_E { INP_REAL, INP_COMPLEX };
+
 
 #define BUFFER_SAMPLES_SHIFT	16
 #define BUFFER_SAMPLES		(1 << BUFFER_SAMPLES_SHIFT)
@@ -67,8 +70,10 @@ pthread_cond_t cb_cond;
 pthread_cond_t iq_cond;
 
 FILE *file;
-int8_t *txbuf = NULL;
-int8_t *ambuf = NULL;
+int8_t *itxbuf = NULL;
+int8_t *qtxbuf = NULL;
+int8_t *iambuf = NULL;
+int8_t *qambuf = NULL;
 int8_t *buf1 = NULL;
 int8_t *buf2 = NULL;
 
@@ -80,6 +85,10 @@ int input_freq = 48000;
 
 complex float *ampbuf;
 complex float *slopebuf;
+
+long int * pdbuf;
+long int * pdslopebuf;
+
 int writepos, readpos;
 int swap_iq = 0;
 int ignore_eof = 0;
@@ -87,12 +96,15 @@ int ignore_eof = 0;
 void usage(void)
 {
 	fprintf(stderr,
-        "fl2k_iq, an IQ modulator for FL2K VGA dongles\n\n"
+        "fl2k_ampliphase, a special modulator for FL2K VGA dongles\n\n"
         "Usage:"
         "\t[-d device index (default: 0)]\n"
         "\t[-c center frequency (default: 1440 kHz)]\n"
         "\t[-i input baseband sample rate (default: 48000 Hz)]\n"
         "\t[-s samplerate in Hz (default: 96 MS/s)]\n"
+        "\t[-t type of input: real/complex (default: real)\n"
+	    "\t    input requirements: real    - single channel (mono)\n"
+        "\t                        complex - dual channel (stereo)\n"
         "\t[-w swap I & Q (invert spectrum)\n"
         "\t[-e ignore EOF\n"
         "\tfilename (use '-' to read from stdin)\n\n"
@@ -138,12 +150,15 @@ static void sighandler(int signum)
 #define TRIG_TABLE_ORDER	8
 #define TRIG_TABLE_SHIFT	(32 - TRIG_TABLE_ORDER)
 #define TRIG_TABLE_LEN	(1 << TRIG_TABLE_ORDER)
-#define ANG_INCR	(0xffffffff / DDS_2PI)
+//#define ANG_INCR	(0xffffffff / DDS_2PI)
+#define ANG_INCR    ((float)(0x100000000)) / DDS_2PI
+
+enum waveform_E { WF_SINE, WF_RECT };
 
 struct trigonometric_table_S {
     int     initialized;
-    int16_t sine[TRIG_TABLE_LEN];
-    int16_t cosine[TRIG_TABLE_LEN];
+    int16_t quadrature[TRIG_TABLE_LEN];
+    int16_t inphase[TRIG_TABLE_LEN];
 };
 
 static struct trigonometric_table_S trig_table = { .initialized = 0 };
@@ -151,8 +166,16 @@ static struct trigonometric_table_S trig_table = { .initialized = 0 };
 typedef struct {
 	float sample_freq;
 	float freq;
+	/* instantaneous phase */
 	unsigned long int phase;
+	/* phase increment */
 	unsigned long int phase_step;
+
+	/* for phase modulation */
+	long int phase_delta;
+    long int phase_slope;
+
+    /* for amplitude modulation */
 	complex float amplitude;
 	complex float ampslope;
 } dds_t;
@@ -169,7 +192,13 @@ static inline void dds_set_amp(dds_t *dds, complex float amplitude, complex floa
 	dds->ampslope  = ampslope;
 }
 
-dds_t dds_init(float sample_freq, float freq, float phase, float amp)
+static inline void dds_set_phase(dds_t *dds, long int phase_delta, long int phase_slope)
+{
+    dds->phase_delta = phase_delta;
+    dds->phase_slope = phase_slope;
+}
+
+dds_t dds_init(float sample_freq, float freq, float phase, float amp, enum waveform_E waveform )
 {
 	dds_t dds;
 	int i;
@@ -178,12 +207,19 @@ dds_t dds_init(float sample_freq, float freq, float phase, float amp)
 	dds.phase = phase * ANG_INCR;
 	dds_set_freq(&dds, freq);
 	dds_set_amp(&dds, amp, 0);
-	/* Initialize sine table, prescaled for 16 bit signed integer */
+	/* Initialize quadrature table, prescaled for 16 bit signed integer */
 	if (!trig_table.initialized) {
 		float incr = 1.0 / (float)TRIG_TABLE_LEN;
 		for (i = 0; i < TRIG_TABLE_LEN; i++){
-			trig_table.sine[i]   = sin(incr * i * DDS_2PI) * 32767;
-            trig_table.cosine[i] = cos(incr * i * DDS_2PI) * 32767;
+		    if(waveform == WF_SINE){
+                trig_table.quadrature[i]= sin(incr * i * DDS_2PI) * 32767;
+                trig_table.inphase[i]   = cos(incr * i * DDS_2PI) * 32767;
+		    }
+		    else{
+		        /* rectangular / square output */
+                trig_table.quadrature[i]= sin(incr * i * DDS_2PI) >= 0 ? 32767 : -32767;
+                trig_table.inphase[i]   = cos(incr * i * DDS_2PI) >= 0 ? 32767 : -32767;
+		    }
 		}
 
 		trig_table.initialized = 1;
@@ -206,8 +242,8 @@ static inline int8_t dds_real(dds_t *dds)
 	//amp = 255;
 	amp_i = creal(dds->amplitude) * 23170.0;		// 0..15, * 1/SQRT(2)
 	amp_q = cimag(dds->amplitude) * 23170.0;
-	amp_i = amp_i * trig_table.sine[tmp];           // 0..31, * 1/SQRT(2)
-    amp_q = amp_q * trig_table.cosine[tmp];         // 0..31, * 1/SQRT(2)
+	amp_i = amp_i * trig_table.quadrature[tmp];           // 0..31, * 1/SQRT(2)
+    amp_q = amp_q * trig_table.inphase[tmp];         // 0..31, * 1/SQRT(2)
 	amp8 = (int8_t) ((amp_i + amp_q) >> 24);        // 0..31 >> 24 => 0..8
 	dds->amplitude += dds->ampslope;
 	return amp8;
@@ -219,6 +255,47 @@ static inline void dds_real_buf(dds_t *dds, int8_t *buf, int count)
 	for (i = 0; i < count; i++)
 		buf[i] = dds_real(dds);
 }
+
+
+static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
+{
+    int pi_i, pi_q;
+    int32_t amp_i, amp_q;
+
+    // get current carrier phase, add phase mod,  calculate table index
+    pi_i = (dds->phase - dds->phase_delta) >> TRIG_TABLE_SHIFT;
+    pi_q = (dds->phase + dds->phase_delta) >> TRIG_TABLE_SHIFT;
+    // advance dds generator
+    dds->phase += dds->phase_step;
+
+    // add some extra phase modulation
+    dds->phase += dds->phase_delta;
+    dds->phase &= 0xffffffff;
+
+    //amp = 255;
+    amp_i = (int32_t) (creal(dds->amplitude) * 32767.0);  // 0..15
+    amp_q = (int32_t) (cimag(dds->amplitude) * 32767.0);
+
+    amp_i = amp_i * trig_table.inphase[pi_i];          // 0..31
+    amp_q = amp_q * trig_table.quadrature[pi_q];       // 0..31
+
+    *i = (int8_t) (amp_i >> 24);        // 0..31 >> 24 => 0..8
+    *q = (int8_t) (amp_q >> 24);        // 0..31 >> 24 => 0..8
+
+    dds->amplitude      += dds->ampslope;
+    dds->phase_delta    += dds->phase_slope;
+    return;
+}
+
+
+static inline void dds_complex_buf(dds_t *dds, int8_t *ibuf, int8_t *qbuf, int count)
+{
+    int i;
+    for (i = 0; i < count; i++){
+        dds_complex(dds, &ibuf[i], &qbuf[i]);
+    }
+}
+
 
 /* Signal generation and some helpers */
 
@@ -235,10 +312,12 @@ static void *iq_worker(void *arg)
 	int buf_prefilled = 0;
 
 	/* Prepare the oscillators */
-	base_signal = dds_init(samp_rate, base_freq, 0, 1);
+	base_signal = dds_init(samp_rate, base_freq, 0, 1, WF_RECT);
 
 	while (!do_exit) {
-		dds_set_amp(&base_signal, ampbuf[readpos], slopebuf[readpos]);
+		// dds_set_amp(&base_signal, ampbuf[readpos], slopebuf[readpos]);
+	    /* phase modulate the oscillator */
+		dds_set_phase(&base_signal, pdbuf[readpos], pdslopebuf[readpos]);
 		readpos++;
 		readpos &= BUFFER_SAMPLES_MASK;
 
@@ -246,24 +325,29 @@ static void *iq_worker(void *arg)
 		if ((len + rf_to_baseband_sample_ratio) > FL2K_BUF_LEN) {
 			readlen = FL2K_BUF_LEN - len;
 			remaining = rf_to_baseband_sample_ratio - readlen;
-			dds_real_buf(&base_signal, &ambuf[len], readlen);
+			dds_complex_buf(&base_signal, &iambuf[len], &qambuf[len],readlen);
 
 			if (buf_prefilled) {
 				/* swap buffers */
-				tmp_ptr = ambuf;
-				ambuf = txbuf;
-				txbuf = tmp_ptr;
+				tmp_ptr = iambuf;
+				iambuf  = itxbuf;
+				itxbuf   = tmp_ptr;
+
+                tmp_ptr = qambuf;
+                qambuf  = qtxbuf;
+                qtxbuf  = tmp_ptr;
+
 				pthread_mutex_lock(&cb_mutex);
 				pthread_cond_wait(&cb_cond, &cb_mutex);
 				pthread_mutex_unlock(&cb_mutex);
 			}
 
-			dds_real_buf(&base_signal, ambuf, remaining);
+			dds_complex_buf(&base_signal, iambuf, qambuf, remaining);
 			len = remaining;
 
 			buf_prefilled = 1;
 		} else {
-			dds_real_buf(&base_signal, &ambuf[len], rf_to_baseband_sample_ratio);
+		    dds_complex_buf(&base_signal, &iambuf[len], &qambuf[len], rf_to_baseband_sample_ratio);
 			len += rf_to_baseband_sample_ratio;
 		}
 		pthread_mutex_lock(&iq_mutex);
@@ -290,69 +374,86 @@ static inline int writelen(int maxlen)
 	return r;
 }
 
-static inline float complex modulate_sample_iq(const int lastwritepos, const float complex lastamp, const float complex sample)
+
+
+static inline float complex modulate_sample_ampliphase(const int lastwritepos, const float lastamp, const float sample, float modulationIndex)
 {
-	float complex amp;
-	float complex slope;
+    float amp;
+    float slope;
 
-	/* Calculate modulator amplitudes at this point to lessen
-	 * the calculations needed in the signal generator */
-	amp = sample;
+    /* Calculate modulator amplitudes at this point to lessen
+     * the calculations needed in the signal generator */
+    amp = sample;
 
-	/* What we do here is calculate a linear "slope" from
-	the previous sample to this one. This is then used by
-	the modulator to gently increase/decrease the amplitude
-	with each sample without the need to recalculate
-	the dds parameters. In fact this gives us a very
-	efficient and pretty good interpolation filter. */
-	slope = amp - lastamp;
-	slope = slope * 1.0/ (float) rf_to_baseband_sample_ratio;
-	slopebuf[writepos] = slope;
-	ampbuf[writepos]   = lastamp;
+    /* What we do here is calculate a linear "slope" from
+    the previous sample to this one. This is then used by
+    the modulator to gently increase/decrease the phase
+    with each sample without the need to recalculate
+    the dds parameters. In fact this gives us a very
+    efficient and pretty good interpolation filter. */
+    slope = amp - lastamp;
+    slope = slope * 1.0/ (float) rf_to_baseband_sample_ratio;
+    pdbuf[writepos]        = (long int) lastamp * modulationIndex * ANG_INCR;
+    pdslopebuf[writepos]   = (long int) slope   * modulationIndex * ANG_INCR;
 
-	return amp;
+    return amp;
 }
 
 
-void iq_modulator()
+void ampliphase_modulator(enum inputType_E inputType)
 {
-	unsigned int i;
-	size_t len;
-	float freq;
-	float complex lastamp = 0;
-	int16_t baseband_buf[BASEBAND_BUF_SIZE][2];
-	uint32_t lastwritepos = writepos;
-	float complex sample;
+    unsigned int i;
+    size_t len;
+    float freq;
+    float complex lastamp = 0;
+    int16_t baseband_buf_real[BASEBAND_BUF_SIZE];
+    int16_t baseband_buf_cplx[BASEBAND_BUF_SIZE][2];
+    uint32_t lastwritepos = writepos;
+    float complex sample;
 
-	while (!do_exit) {
-		int swap = swap_iq;
-		len = writelen(BASEBAND_BUF_SIZE);
-		if (len > 1) {
-			len = fread(baseband_buf, 4, len, file);
+    while (!do_exit) {
+        int swap = swap_iq;
+        len = writelen(BASEBAND_BUF_SIZE);
+        if (len > 1) {
+            if(inputType == INP_REAL){
+                len = fread(baseband_buf_real, 1, len, file);
+                for(i = 0 ; i < len; i++){
+                    /* input is -1.0 .. +1.0 (-32768 .. 32767)
+                     * transform to 0.0 .. +1.0 (0 .. 32767)
+                     * put into I part of BB
+                     */
+                    baseband_buf_cplx[i][0] = baseband_buf_real[i] / 2 + INT16_MAX/2;
+                    /* Q part of BB is zero for AM */
+                    baseband_buf_cplx[i][1] = 0;
+                }
+            }
+            else{
+                len = fread(baseband_buf_cplx, 2, len, file);
+            }
 
-			if (len == 0){
-				if(ferror(file)){
-					do_exit = 1;
-				}
-				if(!ignore_eof && feof(file)){
-					do_exit = 1;
-				}
-			}
+            if (len == 0){
+                if(ferror(file)){
+                    do_exit = 1;
+                }
+                if(!ignore_eof && feof(file)){
+                    do_exit = 1;
+                }
+            }
 
-			for (i = 0; i < len; i++) {
-				sample = (float) baseband_buf[i][0+swap] / 32768.0 + I * (float) baseband_buf[i][1-swap] / 32768.0;
+            for (i = 0; i < len; i++) {
+                sample = (float) baseband_buf_cplx[i][0+swap] / 32768.0 + I * (float) baseband_buf_cplx[i][1-swap] / 32768.0;
 
-				/* Modulate and buffer the sample */
-				lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
-				lastwritepos = writepos++;
-				writepos %= BUFFER_SAMPLES;
-			}
-		} else {
-			pthread_mutex_lock(&iq_mutex);
-			pthread_cond_wait(&iq_cond, &iq_mutex);
-			pthread_mutex_unlock(&iq_mutex);
-		}
-	}
+                /* Modulate and buffer the sample */
+                lastamp = modulate_sample_ampliphase(lastwritepos, lastamp, sample);
+                lastwritepos = writepos++;
+                writepos %= BUFFER_SAMPLES;
+            }
+        } else {
+            pthread_mutex_lock(&iq_mutex);
+            pthread_cond_wait(&iq_cond, &iq_mutex);
+            pthread_mutex_unlock(&iq_mutex);
+        }
+    }
 }
 
 
@@ -369,7 +470,8 @@ void fl2k_callback(fl2k_data_info_t *data_info)
 	pthread_cond_signal(&cb_cond);
 
 	data_info->sampletype_signed = 1;
-	data_info->r_buf = (char *)txbuf;
+	data_info->r_buf = (char *)itxbuf;
+    data_info->g_buf = (char *)qtxbuf;
 }
 
 int main(int argc, char **argv)
@@ -381,6 +483,7 @@ int main(int argc, char **argv)
 	char *filename = NULL;
 	int option_index = 0;
 	int input_freq_specified = 0;
+	enum inputType_E input_type = INP_REAL;
 
 #ifndef _WIN32
 	struct sigaction sigact, sigign;
@@ -392,7 +495,7 @@ int main(int argc, char **argv)
 	};
 
 	while (1) {
-		opt = getopt_long(argc, argv, "ewd:c:i:s:", long_options, &option_index);
+		opt = getopt_long(argc, argv, "ewd:c:i:s:t:", long_options, &option_index);
 
 		/* end of options reached */
 		if (opt == -1)
@@ -414,6 +517,14 @@ int main(int argc, char **argv)
 		case 's':
 			samp_rate = (uint32_t)atof(optarg);
 			break;
+        case 't':
+            /* type */
+            if(strcasecmp(optarg, "complex") && strcasecmp(optarg, "real")){
+                fprintf(stderr, "Unknown parameter to -t : %s", optarg);
+                exit(1);
+            }
+            input_type = strcasecmp(optarg, "complex") == 0 ? INP_COMPLEX : INP_REAL;
+            break;
 		case 'w':
 			swap_iq = 1;
 			break;
@@ -449,20 +560,32 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* allocate buffer */
+	/* allocate I buffer */
 	buf1 = malloc(FL2K_BUF_LEN);
 	buf2 = malloc(FL2K_BUF_LEN);
 	if (!buf1 || !buf2) {
 		fprintf(stderr, "malloc error!\n");
 		exit(1);
 	}
+	iambuf = buf1;
+	itxbuf = buf2;
 
-	ambuf = buf1;
-	txbuf = buf2;
+    /* allocate Q buffer */
+	buf1 = malloc(FL2K_BUF_LEN);
+    buf2 = malloc(FL2K_BUF_LEN);
+    if (!buf1 || !buf2) {
+        fprintf(stderr, "malloc error!\n");
+        exit(1);
+    }
+    qambuf = buf1;
+    qtxbuf = buf2;
 
-	/* Decoded audio */
+
+	/* Baseband buffer */
 	slopebuf 	= malloc(BUFFER_SAMPLES * sizeof(float complex));
 	ampbuf  	= malloc(BUFFER_SAMPLES * sizeof(float complex));
+	pdbuf       = malloc(BUFFER_SAMPLES * sizeof(long int));
+    pdslopebuf  = malloc(BUFFER_SAMPLES * sizeof(long int));
 	readpos 	= 0;
 	writepos 	= 1;
 
@@ -518,7 +641,7 @@ int main(int argc, char **argv)
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
 
-	iq_modulator();
+	ampliphase_modulator(input_type);
 
 out:
 	fl2k_close(dev);
