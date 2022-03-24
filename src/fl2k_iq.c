@@ -267,11 +267,10 @@ static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
     // get current carrier phase, add phase mod,  calculate table index
     pi_i = (dds->phase - dds->phase_delta) >> TRIG_TABLE_SHIFT;
     pi_q = (dds->phase + dds->phase_delta) >> TRIG_TABLE_SHIFT;
+
     // advance dds generator
     dds->phase += dds->phase_step;
-
-    // add some extra phase modulation
-    dds->phase += dds->phase_delta;
+    // wrap around properly
     dds->phase &= 0xffffffff;
 
     //amp = 255;
@@ -284,6 +283,7 @@ static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
     *i = (int8_t) (amp_i >> 24);        // 0..31 >> 24 => 0..8
     *q = (int8_t) (amp_q >> 24);        // 0..31 >> 24 => 0..8
 
+    /* advance modulation signal by interpolated input from baseband */
     dds->amplitude      += dds->ampslope;
     dds->phase_delta    += dds->phase_slope;
     return;
