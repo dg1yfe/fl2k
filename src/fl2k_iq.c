@@ -400,7 +400,7 @@ static inline float complex modulate_sample_ampliphase(const int lastwritepos, c
 }
 
 
-void ampliphase_modulator(enum inputType_E inputType)
+void ampliphase_modulator(enum inputType_E inputType, const float modIndex)
 {
     unsigned int i;
     size_t len;
@@ -444,7 +444,7 @@ void ampliphase_modulator(enum inputType_E inputType)
                 sample = (float) baseband_buf_cplx[i][0+swap] / 32768.0 + I * (float) baseband_buf_cplx[i][1-swap] / 32768.0;
 
                 /* Modulate and buffer the sample */
-                lastamp = modulate_sample_ampliphase(lastwritepos, lastamp, sample);
+                lastamp = modulate_sample_ampliphase(lastwritepos, lastamp, sample, modIndex);
                 lastwritepos = writepos++;
                 writepos %= BUFFER_SAMPLES;
             }
@@ -484,6 +484,7 @@ int main(int argc, char **argv)
     int option_index = 0;
     int input_freq_specified = 0;
     enum inputType_E input_type = INP_REAL;
+    float modulation_index = 1.0;
 
 #ifndef _WIN32
     struct sigaction sigact, sigign;
@@ -495,7 +496,7 @@ int main(int argc, char **argv)
     };
 
     while (1) {
-        opt = getopt_long(argc, argv, "ewd:c:i:s:t:", long_options, &option_index);
+        opt = getopt_long(argc, argv, "ewd:c:i:s:t:m:", long_options, &option_index);
 
         /* end of options reached */
         if (opt == -1)
@@ -513,6 +514,9 @@ int main(int argc, char **argv)
         case 'i':
             input_freq = (uint32_t)atof(optarg);
             input_freq_specified = 1;
+            break;
+        case 'm':
+            modulation_index = atof(optarg);
             break;
         case 's':
             samp_rate = (uint32_t)atof(optarg);
@@ -641,7 +645,7 @@ int main(int argc, char **argv)
     SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
 
-    ampliphase_modulator(input_type);
+    ampliphase_modulator(input_type, modulation_index);
 
     out:
     fl2k_close(dev);
