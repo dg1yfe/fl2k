@@ -96,7 +96,8 @@ int ignore_eof = 0;
 void usage(void)
 {
     fprintf(stderr,
-            "fl2k_ampliphase, a special modulator for FL2K VGA dongles\n\n"
+            "fl2k_ampliphase, a special modulator for FL2K VGA dongles\n"
+            "(output comes on channels r&g)\n\n"
             "Usage:"
             "\t[-d device index (default: 0)]\n"
             "\t[-c center frequency (default: 1440 kHz)]\n"
@@ -474,6 +475,7 @@ void fl2k_callback(fl2k_data_info_t *data_info)
     data_info->r_buf = (char *)itxbuf;
     data_info->g_buf = (char *)qtxbuf;
 }
+
 
 int main(int argc, char **argv)
 {
