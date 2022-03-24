@@ -100,13 +100,14 @@ void usage(void)
             "Usage:"
             "\t[-d device index (default: 0)]\n"
             "\t[-c center frequency (default: 1440 kHz)]\n"
-            "\t[-i input baseband sample rate (default: 48000 Hz)]\n"
             "\t[-s samplerate in Hz (default: 96 MS/s)]\n"
-            "\t[-t type of input: real/complex (default: real)\n"
+            "\t[-m modulation index (default: 1.0)]\n"
+            "\t[-i input baseband sample rate (default: 48000 Hz)]\n"
+            "\t[-t type of input: real/complex (default: real)]\n"
             "\t    input requirements: real    - single channel (mono)\n"
             "\t                        complex - dual channel (stereo)\n"
-            "\t[-w swap I & Q (invert spectrum)\n"
-            "\t[-e ignore EOF\n"
+            "\t[-w swap I & Q (invert spectrum)]\n"
+            "\t[-e ignore EOF]\n"
             "\tfilename (use '-' to read from stdin)\n\n"
     );
     exit(1);
