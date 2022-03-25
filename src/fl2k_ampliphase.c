@@ -540,24 +540,16 @@ int main(int argc, char **argv)
     }
 
     /* allocate I buffer */
-    buf1 = malloc(FL2K_BUF_LEN);
-    buf2 = malloc(FL2K_BUF_LEN);
-    if (!buf1 || !buf2) {
-        fprintf(stderr, "malloc error!\n");
-        exit(1);
-    }
-    iambuf = buf1;
-    itxbuf = buf2;
-
+    iambuf = malloc(FL2K_BUF_LEN);
+    itxbuf = malloc(FL2K_BUF_LEN);
     /* allocate Q buffer */
-    buf1 = malloc(FL2K_BUF_LEN);
-    buf2 = malloc(FL2K_BUF_LEN);
-    if (!buf1 || !buf2) {
+    qambuf = malloc(FL2K_BUF_LEN);
+    qtxbuf = malloc(FL2K_BUF_LEN);
+
+    if (!qambuf || !qtxbuf || !iambuf || !itxbuf) {
         fprintf(stderr, "malloc error!\n");
         exit(1);
     }
-    qambuf = buf1;
-    qtxbuf = buf2;
 
 
     /* Baseband buffer */
