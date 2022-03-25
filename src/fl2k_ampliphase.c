@@ -233,12 +233,12 @@ dds_t dds_init(float sample_freq, float freq, float phase, float amp, enum wavef
 
 static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
 {
-    int pi_i, pi_q;
+    int phase_idx_i, phase_idx_q;
     int32_t amp_i, amp_q;
 
     // get current carrier phase, add phase mod,  calculate table index
-    pi_i = (dds->phase - dds->phase_delta) >> TRIG_TABLE_SHIFT;
-    pi_q = (dds->phase + dds->phase_delta) >> TRIG_TABLE_SHIFT;
+    phase_idx_i = (dds->phase - dds->phase_delta) >> TRIG_TABLE_SHIFT;
+    phase_idx_q = (dds->phase + dds->phase_delta) >> TRIG_TABLE_SHIFT;
 
     // advance dds generator
     dds->phase += dds->phase_step;
@@ -249,8 +249,8 @@ static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
     amp_i = (int32_t) (creal(dds->amplitude) * 32767.0);  // 0..15
     amp_q = (int32_t) (cimag(dds->amplitude) * 32767.0);
 
-    amp_i = amp_i * trig_table.inphase[pi_i];          // 0..31
-    amp_q = amp_q * trig_table.quadrature[pi_q];       // 0..31
+    amp_i = amp_i * trig_table.inphase[phase_idx_i];      // 0..31
+    amp_q = amp_q * trig_table.quadrature[phase_idx_q];   // 0..31
 
     *i = (int8_t) (amp_i >> 24);        // 0..31 >> 24 => 0..8
     *q = (int8_t) (amp_q >> 24);        // 0..31 >> 24 => 0..8
@@ -305,7 +305,7 @@ static void *iq_worker(void *arg)
                 /* swap buffers */
                 tmp_ptr = iambuf;
                 iambuf  = itxbuf;
-                itxbuf   = tmp_ptr;
+                itxbuf  = tmp_ptr;
 
                 tmp_ptr = qambuf;
                 qambuf  = qtxbuf;
