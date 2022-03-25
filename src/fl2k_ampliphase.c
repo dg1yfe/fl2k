@@ -230,34 +230,6 @@ dds_t dds_init(float sample_freq, float freq, float phase, float amp, enum wavef
     return dds;
 }
 
-static inline int8_t dds_real(dds_t *dds)
-{
-    int tmp;
-    int32_t amp_i, amp_q;
-    int8_t amp8;
-
-    // advance dds generator
-    tmp = dds->phase >> TRIG_TABLE_SHIFT;
-    dds->phase += dds->phase_step;
-    dds->phase &= 0xffffffff;
-
-    //amp = 255;
-    amp_i = creal(dds->amplitude) * 23170.0;		// 0..15, * 1/SQRT(2)
-    amp_q = cimag(dds->amplitude) * 23170.0;
-    amp_i = amp_i * trig_table.quadrature[tmp];           // 0..31, * 1/SQRT(2)
-    amp_q = amp_q * trig_table.inphase[tmp];         // 0..31, * 1/SQRT(2)
-    amp8 = (int8_t) ((amp_i + amp_q) >> 24);        // 0..31 >> 24 => 0..8
-    dds->amplitude += dds->ampslope;
-    return amp8;
-}
-
-static inline void dds_real_buf(dds_t *dds, int8_t *buf, int count)
-{
-    int i;
-    for (i = 0; i < count; i++)
-        buf[i] = dds_real(dds);
-}
-
 
 static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
 {
