@@ -2,8 +2,8 @@
  * osmo-fl2k, turns FL2000-based USB 3.0 to VGA adapters into
  * low cost DACs
  *
- * fl2k-iq
- * Copyright (C) 2020 by Felix Erckenbrecht <eligs@eligs.de>
+ * fl2k-ampliphase
+ * Copyright (C) 2022 by Felix Erckenbrecht <eligs@eligs.de>
  *
  * based on fl2k-fm code:
  * Copyright (C) 2016-2018 by Steve Markgraf <steve@steve-m.de>
