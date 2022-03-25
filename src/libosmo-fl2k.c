@@ -2,7 +2,7 @@
  * osmo-fl2k, turns FL2000-based USB 3.0 to VGA adapters into
  * low cost DACs
  *
- * Copyright (C) 2016-2018 by Steve Markgraf <steve@steve-m.de>
+ * Copyright (C) 2016-2020 by Steve Markgraf <steve@steve-m.de>
  *
  * SPDX-License-Identifier: GPL-2.0+
  *
@@ -250,9 +250,9 @@ int fl2k_set_sample_rate(fl2k_dev_t *dev, uint32_t target_freq)
 				error = sample_clock - (double)target_freq;
 
 				/* Keep closest match */
-				if (fabsf(error) < last_error) {
+				if (fabs(error) < last_error) {
 					result_reg = reg;
-					last_error = fabsf(error);
+					last_error = fabs(error);
 				}
 			}
 		}
@@ -262,7 +262,7 @@ int fl2k_set_sample_rate(fl2k_dev_t *dev, uint32_t target_freq)
 	error = sample_clock - (double)target_freq;
 	dev->rate = sample_clock;
 
-	if (fabsf(error) > 1)
+	if (fabs(error) > 1)
 		fprintf(stderr, "Requested sample rate %d not possible, using"
 		                " %f, error is %f\n", target_freq, sample_clock, error); 
 
@@ -444,11 +444,16 @@ int fl2k_open(fl2k_dev_t **out_dev, uint32_t index)
 		fprintf(stderr, "usb_claim_interface 0 error %d\n", r);
 		goto err;
 	}
-	r = libusb_claim_interface(dev->devh, 1);
 
+	r = libusb_set_interface_alt_setting(dev->devh, 0, 1);
 	if (r < 0) {
-		fprintf(stderr, "usb_claim_interface 1 error %d\n", r);
-		goto err;
+		fprintf(stderr, "Failed to switch interface 0 to "
+				"altsetting 1, trying to use interface 1\n");
+
+		r = libusb_claim_interface(dev->devh, 1);
+		if (r < 0) {
+			fprintf(stderr, "Could not claim interface 1: %d\n", r);
+		}
 	}
 
 	r = fl2k_init_device(dev);
@@ -573,6 +578,10 @@ static int fl2k_alloc_submit_transfers(fl2k_dev_t *dev)
 {
 	unsigned int i;
 	int r = 0;
+	const char *incr_usbfs = "Please increase your allowed usbfs buffer"
+				 " size with the following command:\n"
+				 "echo 0 > /sys/module/usbcore/parameters/"
+				 "usbfs_memory_mb\n";
 
 	if (!dev)
 		return FL2K_ERROR_INVALID_PARAM;
@@ -613,8 +622,9 @@ static int fl2k_alloc_submit_transfers(fl2k_dev_t *dev)
 			}
 		} else {
 			fprintf(stderr, "Failed to allocate zero-copy "
-					"buffer for transfer %d\nFalling "
-					"back to buffers in userspace\n", i);
+					"buffer for transfer %d\n%sFalling "
+					"back to buffers in userspace\n",
+					i, incr_usbfs);
 			dev->use_zerocopy = 0;
 			break;
 		}
@@ -668,12 +678,8 @@ static int fl2k_alloc_submit_transfers(fl2k_dev_t *dev)
 		dev->xfer_info[i].state = BUF_SUBMITTED;
 
 		if (r < 0) {
-			fprintf(stderr, "Failed to submit transfer %i\n"
-					"Please increase your allowed " 
-					"usbfs buffer size with the "
-					"following command:\n"
-					"echo 0 > /sys/module/usbcore"
-					"/parameters/usbfs_memory_mb\n", i);
+			fprintf(stderr, "Failed to submit transfer %i\n%s",
+					i, incr_usbfs);
 			break;
 		}
 	}
@@ -780,6 +786,9 @@ static void *fl2k_usb_worker(void *arg)
 			}
 		}
 	}
+
+	/* wake up sample worker */
+	pthread_cond_signal(&dev->buf_cond);
 
 	/* wait for sample worker thread to finish before freeing buffers */
 	pthread_join(dev->sample_worker_thread, NULL);  
