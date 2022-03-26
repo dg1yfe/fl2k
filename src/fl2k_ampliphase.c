@@ -655,8 +655,12 @@ int main(int argc, char **argv)
 
     free(ampbuf);
     free(slopebuf);
-    free(buf1);
-    free(buf2);
+    free(pdbuf);
+    free(pdslopebuf);
+    free(iambuf);
+    free(qambuf);
+    free(itxbuf);
+    free(qtxbuf);
 
     return 0;
 }
