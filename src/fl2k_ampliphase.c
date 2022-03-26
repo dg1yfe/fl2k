@@ -153,7 +153,8 @@ static void sighandler(int signum)
 #define TRIG_TABLE_SHIFT	(32 - TRIG_TABLE_ORDER)
 #define TRIG_TABLE_LEN	(1 << TRIG_TABLE_ORDER)
 //#define ANG_INCR	(0xffffffff / DDS_2PI)
-#define ANG_INCR    ((float)(0x100000000)) / DDS_2PI
+#define INT_2PI     (0x100000000)
+#define ANG_INCR    ((float)INT_2PI) / DDS_2PI
 
 enum waveform_E { WF_SINE, WF_RECT };
 
@@ -181,6 +182,8 @@ typedef struct {
     complex float amplitude;
     complex float ampslope;
 } dds_t;
+
+
 
 static inline void dds_set_freq(dds_t *dds, float freq)
 {
@@ -290,7 +293,7 @@ static void *iq_worker(void *arg)
 
     while (!do_exit) {
         // dds_set_amp(&base_signal, ampbuf[readpos], slopebuf[readpos]);
-        /* phase modulate the oscillator */
+        /* set phase modulation value from audio input */
         dds_set_phase(&base_signal, pdbuf[readpos], pdslopebuf[readpos]);
         readpos++;
         readpos &= BUFFER_SAMPLES_MASK;
@@ -299,6 +302,7 @@ static void *iq_worker(void *arg)
         if ((len + rf_to_baseband_sample_ratio) > FL2K_BUF_LEN) {
             readlen = FL2K_BUF_LEN - len;
             remaining = rf_to_baseband_sample_ratio - readlen;
+            /* generate signal, perform phase modulation on both paths */
             dds_complex_buf(&base_signal, &iambuf[len], &qambuf[len],readlen);
 
             if (buf_prefilled) {
@@ -332,6 +336,8 @@ static void *iq_worker(void *arg)
     pthread_exit(NULL);
 }
 
+
+
 static inline int writelen(int maxlen)
 {
     int rp = readpos;
@@ -350,7 +356,7 @@ static inline int writelen(int maxlen)
 
 
 
-static inline float complex modulate_sample_ampliphase(const int lastwritepos, const float lastamp, const float sample, float modulationIndex)
+static inline float modulate_sample_ampliphase(const int lastwritepos, const float lastamp, const float sample, float modulationIndex)
 {
     float amp;
     float slope;
@@ -367,15 +373,32 @@ static inline float complex modulate_sample_ampliphase(const int lastwritepos, c
     efficient and pretty good interpolation filter. */
     slope = amp - lastamp;
     slope = slope * 1.0/ (float) rf_to_baseband_sample_ratio;
-    pdbuf[writepos]        = (long int) lastamp * modulationIndex * ANG_INCR;
-    pdslopebuf[writepos]   = (long int) slope   * modulationIndex * ANG_INCR;
+    /* set phase-delta buf*/
+    /* soll:                             -45° .. +45°                               */
+    /*                                   -1 .. 1 * 45°                              */
+    /*                                   -1 .. 1 * 0.25 * 2 Pi                      */
+    /*                                   -1 .. 1 * 0.25            *           2 Pi */
+    pdbuf[writepos]        = (long int) (lastamp * modulationIndex * (float) INT_2PI);
+    pdslopebuf[writepos]   = (long int) (slope   * modulationIndex * (float) INT_2PI);
 
     return amp;
 }
 
 
+
 void ampliphase_modulator(enum inputType_E inputType, const float modIndex)
 {
+    /*
+     * upper path: +45° Carrier -> Phase-Mod +/-45° * Audio In -> Squarer -> Drive
+     *
+     * lower path: -45° Carrier -> Phase-Mod -/+45° * Audio In -> Squarer -> Drive
+     *
+     * Audio In |  upper    |   lower   | shift | carrier
+     *     0    |  +45°     |   -45°    |   90° |   50%
+     *     1    |  +90°     |   -90°    |  180° |    0%
+     *    -1    |    0°     |     0°    |    0° |  100%
+     *
+     */
     unsigned int i;
     size_t len;
     float freq;
@@ -383,7 +406,7 @@ void ampliphase_modulator(enum inputType_E inputType, const float modIndex)
     int16_t baseband_buf_real[BASEBAND_BUF_SIZE];
     int16_t baseband_buf_cplx[BASEBAND_BUF_SIZE][2];
     uint32_t lastwritepos = writepos;
-    float complex sample;
+    float sample;
 
     while (!do_exit) {
         int swap = swap_iq;
@@ -395,6 +418,9 @@ void ampliphase_modulator(enum inputType_E inputType, const float modIndex)
                     /* input is -1.0 .. +1.0 (-32768 .. 32767)
                      * transform to 0.0 .. +1.0 (0 .. 32767)
                      * put into I part of BB
+                     *
+                     * AM : (1 + audio) / 2
+                     *       ^-carrier
                      */
                     baseband_buf_cplx[i][0] = baseband_buf_real[i] / 2 + INT16_MAX/2;
                     /* Q part of BB is zero for AM */
@@ -415,7 +441,10 @@ void ampliphase_modulator(enum inputType_E inputType, const float modIndex)
             }
 
             for (i = 0; i < len; i++) {
-                sample = (float) baseband_buf_cplx[i][0+swap] / 32768.0 + I * (float) baseband_buf_cplx[i][1-swap] / 32768.0;
+                //sample = (float) baseband_buf_cplx[i][0+swap] / 32768.0 + I * (float) baseband_buf_cplx[i][1-swap] / 32768.0;
+                /* keep sample real for the moment ... complex bb to be implemented
+                 * this is amplitude only */
+                sample = (float) baseband_buf_cplx[i][0+swap] / 32768.0;
 
                 /* Modulate and buffer the sample */
                 lastamp = modulate_sample_ampliphase(lastwritepos, lastamp, sample, modIndex);
@@ -459,7 +488,7 @@ int main(int argc, char **argv)
     int option_index = 0;
     int input_freq_specified = 0;
     enum inputType_E input_type = INP_REAL;
-    float modulation_index = 1.0;
+    float modulation_index = 0.25; /* maximum phase modulation 0.25 * 2 * Pi -> 45° */
 
 #ifndef _WIN32
     struct sigaction sigact, sigign;
@@ -503,6 +532,10 @@ int main(int argc, char **argv)
                 exit(1);
             }
             input_type = strcasecmp(optarg, "complex") == 0 ? INP_COMPLEX : INP_REAL;
+            if(input_type == INP_COMPLEX){
+                fprintf(stderr, "Complex baseband not yet implemented.\n");
+                exit(1);
+            }
             break;
         case 'w':
             swap_iq = 1;
