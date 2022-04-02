@@ -68,6 +68,7 @@ pthread_mutex_t cb_mutex;
 pthread_mutex_t iq_mutex;
 pthread_cond_t cb_cond;
 pthread_cond_t iq_cond;
+pthread_t dbg_thread;
 
 FILE *file;
 int8_t *itxbuf = NULL;
@@ -92,6 +93,8 @@ long int * pdslopebuf;
 int writepos, readpos;
 int swap_iq = 0;
 int ignore_eof = 0;
+int debug_to_file = 0;
+
 
 void usage(void)
 {
@@ -109,6 +112,7 @@ void usage(void)
             "\t                        complex - dual channel (stereo)\n"
             "\t[-w swap I & Q (invert spectrum)]\n"
             "\t[-e ignore EOF]\n"
+            "\t[-D Debug - write to file 'debug.out' instead of FL2K device]\n"
             "\tfilename (use '-' to read from stdin)\n\n"
     );
     exit(1);
@@ -478,6 +482,39 @@ void fl2k_callback(fl2k_data_info_t *data_info)
 }
 
 
+
+static void *file_worker(void *arg){
+    FILE * f;
+    uint32_t * filebuf;
+    int i;
+    const size_t len = sizeof(*filebuf) * FL2K_BUF_LEN;
+
+    f = arg;
+    filebuf = malloc(len);
+    if(filebuf == NULL){
+        fprintf(stderr,"Error allocating debug file buffer.\n");
+    }
+    else{
+        while(1){
+            for(i=0;i<FL2K_BUF_LEN;i++){
+                filebuf[i] = (itxbuf[i] & 0xff) | ((uint32_t) qtxbuf[i]) << 8;
+            }
+            if(fwrite(filebuf,1,sizeof(len),f) != len){
+                perror("Error writing to debug file");
+                break;
+            }
+            pthread_cond_signal(&cb_cond);
+        }
+    }
+    do_exit = 1;
+    pthread_mutex_lock(&iq_mutex);
+    pthread_cond_signal(&iq_cond);
+    pthread_mutex_unlock(&iq_mutex);
+    return NULL;
+}
+
+
+
 int main(int argc, char **argv)
 {
     int r, opt;
@@ -489,6 +526,7 @@ int main(int argc, char **argv)
     int input_freq_specified = 0;
     enum inputType_E input_type = INP_REAL;
     float modulation_index = 0.25; /* maximum phase modulation 0.25 * 2 * Pi -> 45° */
+    FILE * fDbg = NULL;
 
 #ifndef _WIN32
     struct sigaction sigact, sigign;
@@ -500,7 +538,7 @@ int main(int argc, char **argv)
     };
 
     while (1) {
-        opt = getopt_long(argc, argv, "ewd:c:i:s:t:m:", long_options, &option_index);
+        opt = getopt_long(argc, argv, "ewDd:c:i:s:t:m:", long_options, &option_index);
 
         /* end of options reached */
         if (opt == -1)
@@ -508,6 +546,9 @@ int main(int argc, char **argv)
 
         switch (opt) {
         case 0:
+            break;
+        case 'D':
+            debug_to_file=1;
             break;
         case 'd':
             dev_index = (uint32_t)atoi(optarg);
@@ -606,10 +647,26 @@ int main(int argc, char **argv)
     pthread_cond_init(&iq_cond, NULL);
     pthread_attr_init(&attr);
 
-    fl2k_open(&dev, (uint32_t)dev_index);
-    if (NULL == dev) {
-        fprintf(stderr, "Failed to open fl2k device #%d.\n", dev_index);
-        goto out;
+    if(debug_to_file){
+        fDbg = fopen("debug.out","wb");
+        if(fDbg == NULL){
+            fprintf(stderr, "Failed to open 'debug.out' file.\n");
+            perror("");
+            goto out;
+        }
+        r = pthread_create(&dbg_thread, &attr, file_worker, fDbg);
+        if (r < 0) {
+            fprintf(stderr, "Error spawning debug-file worker thread.\n");
+            goto out;
+        }
+    }
+    else
+    {
+        fl2k_open(&dev, (uint32_t)dev_index);
+        if (NULL == dev) {
+            fprintf(stderr, "Failed to open fl2k device #%d.\n", dev_index);
+            goto out;
+        }
     }
 
     r = pthread_create(&iq_thread, &attr, iq_worker, NULL);
@@ -619,15 +676,17 @@ int main(int argc, char **argv)
     }
 
     pthread_attr_destroy(&attr);
-    r = fl2k_start_tx(dev, fl2k_callback, NULL, 0);
+    if(!debug_to_file){
+        r = fl2k_start_tx(dev, fl2k_callback, NULL, 0);
 
-    /* Set the sample rate */
-    r = fl2k_set_sample_rate(dev, samp_rate);
-    if (r < 0)
-        fprintf(stderr, "WARNING: Failed to set sample rate. %d\n", r);
+        /* Set the sample rate */
+        r = fl2k_set_sample_rate(dev, samp_rate);
+        if (r < 0)
+            fprintf(stderr, "WARNING: Failed to set sample rate. %d\n", r);
 
-    /* read back actual frequency */
-    samp_rate = fl2k_get_sample_rate(dev);
+        /* read back actual frequency */
+        samp_rate = fl2k_get_sample_rate(dev);
+    }
 
     /* Calculate needed constants */
     rf_to_baseband_sample_ratio = samp_rate / input_freq;
@@ -648,7 +707,9 @@ int main(int argc, char **argv)
     ampliphase_modulator(input_type, modulation_index);
 
     out:
-    fl2k_close(dev);
+    if(!debug_to_file){
+        fl2k_close(dev);
+    }
 
     if (file != stdin)
         fclose(file);
