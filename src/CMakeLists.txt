@@ -83,6 +83,7 @@ target_link_libraries(fl2k_ampliphase libosmo-fl2k_shared
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
+set(CMAKE_BUILD_TYPE Debug)
 
 if(UNIX)
 target_link_libraries(fl2k_ampliphase m)

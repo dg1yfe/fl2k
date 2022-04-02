@@ -238,6 +238,7 @@ dds_t dds_init(float sample_freq, float freq, float phase, float amp, enum wavef
 }
 
 
+
 static inline void dds_complex(dds_t *dds, int8_t * i, int8_t * q)
 {
     int phase_idx_i, phase_idx_q;
