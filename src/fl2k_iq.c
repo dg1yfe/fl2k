@@ -82,6 +82,7 @@ complex float *ampbuf;
 complex float *slopebuf;
 int writepos, readpos;
 int swap_iq = 0;
+int keep_running = 0;
 
 void usage(void)
 {
@@ -92,7 +93,8 @@ void usage(void)
         "\t[-c center frequency (default: 1440 kHz)]\n"
         "\t[-i input baseband sample rate (default: 48000 Hz)]\n"
         "\t[-s samplerate in Hz (default: 96 MS/s)]\n"
-        "\t[-w swap I & Q (invert spectrum)\n"
+        "\t[-w swap I & Q (invert spectrum)]\n"
+        "\t[-k do not terminate on input read error or EOF]\n"
         "\tfilename (use '-' to read from stdin)\n\n"
 	);
 	exit(1);
@@ -328,19 +330,19 @@ void iq_modulator()
 		if (len > 1) {
 			len = fread(baseband_buf, 4, len, file);
 
-			if (len == 0){
-				if(ferror(file)){
-					do_exit = 1;
-				}
+			if (len != 0){
+	            for (i = 0; i < len; i++) {
+	                sample = (float) baseband_buf[i][0+swap] / 32768.0 + I * (float) baseband_buf[i][1-swap] / 32768.0;
+
+	                /* Modulate and buffer the sample */
+	                lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
+	                lastwritepos = writepos++;
+	                writepos %= BUFFER_SAMPLES;
+	            }
 			}
-
-			for (i = 0; i < len; i++) {
-				sample = (float) baseband_buf[i][0+swap] / 32768.0 + I * (float) baseband_buf[i][1-swap] / 32768.0;
-
-				/* Modulate and buffer the sample */
-				lastamp = modulate_sample_iq(lastwritepos, lastamp, sample);
-				lastwritepos = writepos++;
-				writepos %= BUFFER_SAMPLES;
+			else if(keep_running == 0){
+			    /* do not distinguish between eof & error, just exit */
+			    do_exit = 1;
 			}
 		} else {
 			pthread_mutex_lock(&iq_mutex);
@@ -387,7 +389,7 @@ int main(int argc, char **argv)
 	};
 
 	while (1) {
-		opt = getopt_long(argc, argv, "wd:c:i:s:", long_options, &option_index);
+		opt = getopt_long(argc, argv, "wkd:c:i:s:", long_options, &option_index);
 
 		/* end of options reached */
 		if (opt == -1)
@@ -412,6 +414,9 @@ int main(int argc, char **argv)
 		case 'w':
 			swap_iq = 1;
 			break;
+        case 'k':
+            keep_running = 1;
+            break;
 		default:
 			usage();
 			break;
